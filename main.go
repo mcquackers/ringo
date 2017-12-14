@@ -2,7 +2,9 @@ package ringo
 
 import (
 	"errors"
+
 	"github.com/glycerine/rbuf"
+	"github.com/golang/glog"
 )
 
 type RingBuffer struct {
@@ -12,6 +14,7 @@ type RingBuffer struct {
 }
 
 func NewBuffer(size int) *RingBuffer {
+	glog.Info("Creating new buffer")
 	return &RingBuffer{
 		Buffer:  rbuf.NewFixedSizeRingBuf(size),
 		diff:    0,
@@ -34,7 +37,9 @@ func (this *RingBuffer) Write(p []byte) (int, error) {
 }
 
 func (this *RingBuffer) Read(p []byte) (int, error) {
+	glog.Info("Attempting to read")
 	if cap(p) > this.diff {
+		glog.Info("Remaking p")
 		p = make([]byte, this.diff, cap(p))
 	}
 
