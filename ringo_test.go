@@ -3,6 +3,7 @@ package ringo
 import (
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/suite"
@@ -157,17 +158,12 @@ func (this *ConcurrencyTestSuite) SetupTest() {
 
 func (this *ConcurrencyTestSuite) TestConcurrencySafety() {
 	t := this.Suite.T()
-
 	wg := &sync.WaitGroup{}
+	done := make(chan interface{})
+	timeout := make(chan interface{})
+
 	wg.Add(1)
 	go func() {
-		go func() {
-			n, err := this.rbuf.Write(makeString(this.size / 3))
-			if assert.Nil(t, err, "Write should not cause an error") {
-				assert.Equal(t, n, this.size/3, "Should have written an amount of bytes equal to one third the size of the entire buffer")
-			}
-		}()
-
 		n, err := this.rbuf.Write(makeString(this.size))
 		if assert.Nil(t, err, "Write should not cause an error") {
 			assert.Equal(t, n, this.size, "Should have written an amount of bytes equal to the size of the entire buffer")
@@ -175,16 +171,21 @@ func (this *ConcurrencyTestSuite) TestConcurrencySafety() {
 		wg.Done()
 	}()
 
-	bytesToRead := make([]byte, this.rbuf.UnreadBytes())
-	n, err := this.rbuf.Read(bytesToRead)
-	wg.Wait()
-	if assert.Nil(t, err) {
-		assert.Equal(t, len(bytesToRead), n)
-		assert.Equal(t, this.size/3, this.rbuf.desiredWriteLength, "Should want to write an amount of bytes equal to one third the size of the buffer")
-		assert.Equal(t, this.rbuf.UnreadBytes(), this.size, "Should be a completely full buffer")
-		assert.Equal(t, this.rbuf.WritableBytes(), 0, "Should have no more space to write in the buffer")
-	}
+	go func() {
+		time.Sleep(2 * time.Second)
+		close(timeout)
+	}()
 
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		t.Error("ringBuffer wrote an amount it should not have been able to write")
+	case <-timeout:
+	}
 }
 
 func TestConcurrencySafety(t *testing.T) {
