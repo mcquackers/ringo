@@ -90,9 +90,25 @@ func (this *WriteTestSuite) TestWriteMaxSizeWorks() {
 	assert.Equal(t, n, this.size, "Should fill the buffer")
 }
 
-// func TestRingBufferWrite(t *testing.T) {
-// 	suite.Run(t, new(WriteTestSuite))
-// }
+func (this *WriteTestSuite) TestDoneBlocksWrite() {
+	t := this.Suite.T()
+
+	stringToWrite := makeString(150)
+	n, err := this.rbuf.Write(stringToWrite)
+	assert.Nil(t, err, "Write error should be nil")
+	assert.Equal(t, 150, n, "Should return the appropriate number of bytes written.")
+
+	this.rbuf.WriteIsComplete()
+
+	n, err = this.rbuf.Write(stringToWrite)
+	assert.NotNil(t, err, "Should error that the buffer has been marked 'done'")
+	assert.Equal(t, "This buffer has been marked as done.  Use Reset() to reopen the buffer for writing", err.Error())
+	assert.Equal(t, 0, n, "Should denote that 0 bytes were written")
+}
+
+func TestRingBufferWrite(t *testing.T) {
+	suite.Run(t, new(WriteTestSuite))
+}
 
 func (this *ReadTestSuite) SetupTest() {
 	this.size = 150
@@ -112,9 +128,9 @@ func (this *ReadTestSuite) TestReadReadsAppropriateLength() {
 	}
 }
 
-// func TestRingBufferRead(t *testing.T) {
-// 	suite.Run(t, new(ReadTestSuite))
-// }
+func TestRingBufferRead(t *testing.T) {
+	suite.Run(t, new(ReadTestSuite))
+}
 
 func (this *SafetyTestSuite) SetupTest() {
 	this.size = 150
@@ -190,6 +206,78 @@ func (this *ConcurrencyTestSuite) TestConcurrencySafety() {
 
 func TestConcurrencySafety(t *testing.T) {
 	suite.Run(t, new(ConcurrencyTestSuite))
+}
+
+func TestReset(t *testing.T) {
+	bufSize := 150
+	ringBuf := NewBuffer(bufSize)
+
+	stringToWrite := makeString(75)
+
+	n, err := ringBuf.Write(stringToWrite)
+	assert.Nil(t, err, "No write error should have been thrown")
+
+	n = ringBuf.WritableBytes()
+	assert.Equal(t, len(stringToWrite), n)
+
+	ringBuf.Reset()
+
+	n = ringBuf.WritableBytes()
+	assert.Equal(t, bufSize, n, "Writable bytes should be the full buffer size")
+}
+
+func TestDoneReset(t *testing.T) {
+	bufSize := 150
+	ringBuf := NewBuffer(bufSize)
+
+	stringToWrite := makeString(75)
+
+	n, err := ringBuf.Write(stringToWrite)
+	assert.Nil(t, err, "No write error should have been thrown")
+
+	ringBuf.WriteIsComplete()
+	n, err = ringBuf.Write(stringToWrite)
+	assert.NotNil(t, err, "Buffer should be closed for writing")
+	assert.Equal(t, 0, n, "No bytes should have been written to buffer")
+
+	ringBuf.Reset()
+	n = ringBuf.WritableBytes()
+	assert.Equal(t, bufSize, n, "Buffer should have maximum bytes available for writing")
+
+	n = ringBuf.UnreadBytes()
+	assert.Equal(t, 0, n, "There should be zero unread bytes after a Reset()")
+}
+
+func TestDoneCalledWithPendingWrite(t *testing.T) {
+	bufSize := 150
+	ringBuf := NewBuffer(bufSize)
+
+	stringToWrite := makeString(75)
+
+	n, err := ringBuf.Write(stringToWrite)
+	assert.Nil(t, err, "No write error should have been thrown")
+	assert.Equal(t, 75, n, "Should have written 75 bytes to buffer")
+
+	go func() {
+		pendingWriteString := makeString(100)
+		n, err := ringBuf.Write(pendingWriteString)
+		assert.Nil(t, err, "A pending write when WriteIsComplete is called should not cause an error")
+		assert.Equal(t, 100, n, "Should still write if a write is pending when WriteIsComplete is called")
+	}()
+
+	goFuncStartTimer := time.NewTimer(50 * time.Millisecond)
+	<-goFuncStartTimer.C
+	ringBuf.WriteIsComplete()
+	readSlice := make([]byte, 25)
+	readBytes, err := ringBuf.Read(readSlice)
+	assert.Nil(t, err, "Shouldn't cause an error to read from a Done buffer")
+	assert.Equal(t, 25, readBytes, "Reading from a Done buffer should not read from the pending write")
+	//Sometimes I wonder: "If I have to use a timer wait in a test, is it really concurrency safe?"
+	goFuncEndTimer := time.NewTimer(50 * time.Millisecond)
+	<-goFuncEndTimer.C
+
+	unreadBytes := ringBuf.UnreadBytes()
+	assert.Equal(t, 150, unreadBytes, "Should have loaded the pending write into the buffer")
 }
 
 func makeString(size int) []byte {
